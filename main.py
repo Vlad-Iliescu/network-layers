@@ -2,7 +2,7 @@ import numpy as np
 import time
 import os
 
-np.float128 = np.float
+#np.float128 = np.float
 
 
 def Sigmoid(Z):
