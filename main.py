@@ -1,6 +1,8 @@
 import numpy as np
 import time
 import os
+import matplotlib.pyplot as plt
+import math
 
 #np.float128 = np.float
 
@@ -95,7 +97,7 @@ class dlnet:
                 print("Cost after iteration %i: %f" % (i, loss))
                 self.loss.append(loss)
 
-        return
+        return Yh
 
     def pred(self, x, y):
         self.X = x
@@ -109,6 +111,10 @@ class dlnet:
             else:
                 comp[0, i] = 0
 
+        tpr, fpr = self.true_false_positive(comp, y)
+
+        print(f'tpr={tpr}, fpt={fpr}')
+
         out = {0.: {True: 0, False: 0}, 1.: {True: 0, False: 0}}
 
         for i in range(0, pred.shape[1]):
@@ -120,6 +126,12 @@ class dlnet:
         TN = out[0.][True]
         FP = out[1.][False]
         FN = out[0.][False]
+
+        err_p = (FP + FN)/pred.shape[1]
+        print(f'err % = {err_p:.2f}')
+
+        interval = 1.96 * math.sqrt((err_p * (1 - err_p)) / pred.shape[1])
+        print(f'%95 CI = {interval:.3f}')
 
         # print("Acc: " + str(np.sum((comp == y) / x.shape[1])))
         acc = (TP + TN) / (TP + TN + FP + FN)
@@ -143,6 +155,35 @@ class dlnet:
         np.savetxt(os.path.join(path,'W2.csv'), self.param['W2'], delimiter=',')
         np.savetxt(os.path.join(path,'b2.csv'), self.param['b2'], delimiter=',')
 
+    def nLoad(self, loadCsv):
+        path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'out', loadCsv)
+
+        self.param['W1'] = np.loadtxt(os.path.join(path,'W1.csv'), delimiter=',').reshape(self.dims[1], self.dims[0])
+        self.param['b1'] = np.loadtxt(os.path.join(path,'b1.csv'), delimiter=',').reshape(self.dims[1], 1)
+        self.param['W2'] = np.loadtxt(os.path.join(path,'W2.csv'), delimiter=',').reshape(self.dims[2], self.dims[1])
+        self.param['b2'] = np.loadtxt(os.path.join(path,'b2.csv'), delimiter=',').reshape(self.dims[2], 1)
+
+    def true_false_positive(self, threshold_vector, y_test):
+        true_positive = np.equal(threshold_vector, 1) & np.equal(y_test, 1)
+        true_negative = np.equal(threshold_vector, 0) & np.equal(y_test, 0)
+        false_positive = np.equal(threshold_vector, 1) & np.equal(y_test, 0)
+        false_negative = np.equal(threshold_vector, 0) & np.equal(y_test, 1)
+
+        tpr = true_positive.sum() / (true_positive.sum() + false_negative.sum())
+        fpr = false_positive.sum() / (false_positive.sum() + true_negative.sum())
+
+        return tpr, fpr
+
+    def roc(self, probabilities, y_test, partitions=100):
+        roc = np.array([])
+        for i in range(partitions + 1):
+            threshold_vector = np.greater_equal(probabilities, i / partitions).astype(int)
+            tpr, fpr = self.true_false_positive(threshold_vector, y_test)
+            roc = np.append(roc, [fpr, tpr])
+
+        return roc.reshape(-1, 2)
+
+
 
 if __name__ == '__main__':
     all_data = np.loadtxt('in.csv', delimiter=',', encoding='utf-8-sig', dtype=np.float128)
@@ -150,9 +191,45 @@ if __name__ == '__main__':
     x = (all_data[:, 0:num_cols - 1]).transpose()
     y = all_data[:, num_cols - 1].reshape(1, num_rows)
 
+    death = np.count_nonzero(y[0])
+    alive = num_rows - death
+    dDeath = (death * 100)/num_rows
+    dAlive = (alive * 100)/num_rows
+
+    print(f'Distribution live={dAlive:.2f}%({alive}), die={dDeath:.2f}%({death})')
+
+    ### generate
+    # nn = dlnet(x, y)
+    # prob = nn.gd(x, y, iter=10_000)
+    # nn.save()
+
+    ### LOAD
     nn = dlnet(x, y)
-    nn.gd(x, y, iter=100_000)
-    nn.save()
+    nn.nLoad('out-1626170557.7618911')
+    prob, loss = nn.forward()
+
+
+
+    ## prob setup plot
+
+    partitions = 1000
+    ROC = nn.roc(prob, y, partitions=partitions)
+    fpr, tpr = ROC[:, 0], ROC[:, 1]
+
+    ### PLOT
+    plt.figure(figsize=(15, 7))
+    plt.scatter(ROC[:, 0], ROC[:, 1], color='#0F9D58', s=100)
+    plt.title('ROC Curve', fontsize=20)
+    plt.xlabel('False Positive Rate', fontsize=16)
+    plt.ylabel('True Positive Rate', fontsize=16)
+
+    rectangle_roc = 0
+    for k in range(partitions):
+        rectangle_roc = rectangle_roc + (fpr[k] - fpr[k + 1]) * tpr[k]
+        # plt.plot([fpr[j], fpr[j]], [ tpr[j], 0], 'k-', lw=2, color='#4285F4')
+
+    print(f'AOC={rectangle_roc}')
 
     # pred_train = nn.pred(x, y)
     pred_test = nn.pred(x, y)
+    # plt.show()
